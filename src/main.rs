@@ -51,7 +51,6 @@ fn edit_image(mut assets: ResMut<Assets<Image>>, query: Query<&DrawSurface>) {
             (pix[0],pix[1],pix[2],pix[3]) = get_color(x_coord, y_coord);
         }
     }
-
 }
 
 fn get_pixel<'a>(x: i32, y: i32, img: &'a mut Image) -> &'a mut [u8] {
@@ -63,13 +62,24 @@ fn get_pixel<'a>(x: i32, y: i32, img: &'a mut Image) -> &'a mut [u8] {
 fn get_color(mut x: f32, mut y: f32) -> (u8, u8, u8, u8) {
     let (cx, cy) = (x, y);
     let (mut x2, mut y2) = (x*x, y*y);
-    let mut depth = 255;
+    let mut depth = 500;
     while depth > 0 && x2 + y2 < 5. {
         x2 = x*x; y2 = y*y;
         y = 2. * x * y + cy;
         x = x2 - y2 + cx;
         depth -= 1;
     }
-
-    (depth as u8, depth as u8, depth as u8, 255)
+    
+    //Really need to think of a good way to assign colors
+    match depth {
+        0 => (0, 0, 0, 255),
+        1..=460 => (0, 0, 255, 255),
+        461..=470 => (0, 36, 219, 255),
+        471..=475 => (0, 75, 183, 255),
+        476..=485 => (0, 111, 147, 255),
+        486..=490 => (0, 147, 111, 255),
+        491..=495 => (0, 183, 75, 255),
+        496..=500 => (0, 255, 0, 255),
+        _ => (255, 255, 255, 255)
+    }
 }
