@@ -45,7 +45,7 @@ fn edit_image(mut assets: ResMut<Assets<Image>>, query: Query<&DrawSurface>) {
 
     for i in 0..img_size[0] as i32 {
         for j in 0..img_size[1] as i32 {
-            let x_coord = i as f32/img.size()[0]*4. - 3.;
+            let x_coord = i as f32/img.size()[0]*3. - 2.3;
             let y_coord = j as f32/img.size()[1]*2. - 1.;
             let pix = get_pixel(i, j, img);
             (pix[0],pix[1],pix[2],pix[3]) = get_color(x_coord, y_coord);
