@@ -1,4 +1,4 @@
-use bevy::{prelude::*, render::{texture::BevyDefault}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}};
+use bevy::{prelude::*, render::{texture::BevyDefault}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}, input::mouse::{MouseWheel, MouseMotion}};
 
 fn main() {
     App::new()
@@ -6,7 +6,7 @@ fn main() {
         .add_plugin(LogDiagnosticsPlugin::default())
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_startup_system(init)
-        //.add_system(edit_image)
+        .add_system(edit_image)
         .run();
 }
 
@@ -26,7 +26,7 @@ fn init(mut assets: ResMut<Assets<Image>>, mut commands: Commands, windows: Res<
     let mut image = create_blank_image(window.width() as u32, window.height() as u32);
     let mut surface = MandelbrotRender {
         image_handle: bevy::asset::HandleId::default::<Image>(),
-        depth: 200,
+        depth: 50,
         width: 2. * (window.width()/window.height()) as f64,
         height: 2.,
         center: (-0.5, 0.)
@@ -68,23 +68,48 @@ fn draw_image(img: &mut Image, surface: &MandelbrotRender) {
     }
 }
 
-/*
-fn edit_image(mut assets: ResMut<Assets<Image>>, query: Query<&MandelbrotRender>) {
-    let mut id = bevy::asset::HandleId::default::<Image>();
-    for d in query.iter() { id = d.image_handle; }
-    let img = assets.get_mut(id).unwrap();
-    let img_size = img.size();
 
-    for i in 0..img_size[0] as i32 {
-        for j in 0..img_size[1] as i32 {
-            let x_coord = i as f32/img.size()[0]*3. - 2.3;
-            let y_coord = j as f32/img.size()[1]*2. - 1.;
-            let pix = get_pixel(i, j, img);
-            (pix[0],pix[1],pix[2],pix[3]) = get_color(x_coord, y_coord);
-        }
+fn edit_image(click: Res<Input<MouseButton>>, motion: EventReader<MouseMotion>, scroll: EventReader<MouseWheel>, mut assets: ResMut<Assets<Image>>, mut query: Query<&mut MandelbrotRender>) {
+    let mut surface: &mut MandelbrotRender = &mut query.get_single_mut().unwrap();
+    let img = assets.get_mut(surface.image_handle).unwrap();
+
+    let scrolled = handle_scroll(scroll, &mut surface);
+    let mut dragged: bool = false;
+    if click.pressed(MouseButton::Left) { dragged = handle_drag(motion, &mut surface, img.size()); }
+    if dragged || scrolled {
+        println!("Rerendering");
+        draw_image(img, surface);
     }
 }
-*/
+
+//returns true if the surface was changed
+fn handle_scroll(mut er: EventReader<MouseWheel>, mut surface: &mut MandelbrotRender) -> bool {
+    let mut ret = false;
+    use bevy::input::mouse::MouseScrollUnit;
+    for e in er.iter() {
+        match e.unit {
+            MouseScrollUnit::Line => {
+                ret = true;
+                surface.height -= e.y as f64 * surface.height * 0.05;
+                surface.width -= e.y as f64 * surface.width * 0.05;
+            },
+            MouseScrollUnit::Pixel => {
+                panic!("Pixel scrolling not yet implemented");
+            }
+        }
+    }
+    return ret;
+}
+//returns true if the surface was changed
+fn handle_drag(mut er: EventReader<MouseMotion>, mut surface: &mut MandelbrotRender, img_size: Vec2) -> bool {
+    let mut ret = false;
+    for e in er.iter() {
+        ret = true;
+        surface.center.0 -= e.delta[0] as f64 * (surface.width / img_size[0] as f64);
+        surface.center.1 -= e.delta[1] as f64 * (surface.height / img_size[1] as f64);
+    }
+    return ret;
+}
 
 fn get_pixel<'a>(x: i32, y: i32, img: &'a mut Image) -> &'a mut [u8] {
     if x > img.size()[0] as i32 || y > img.size()[1] as i32 { panic!("Referenced pixel outside image.")}
