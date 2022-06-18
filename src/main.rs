@@ -1,5 +1,4 @@
 use bevy::{prelude::*, render::{texture::BevyDefault}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}};
-use rug::Float;
 
 fn main() {
     App::new()
@@ -61,11 +60,10 @@ fn draw_image(img: &mut Image, surface: &MandelbrotRender) {
 
     for i in 0..img_size[0] as i32 {
         for j in 0..img_size[1] as i32 {
-            //println!("{i}, {j}");
             let x_coord = x_min + i as f64 * x_step;
             let y_coord = y_min + j as f64 * y_step;
             let pix = get_pixel(i, j, img);
-            (pix[0],pix[1],pix[2],pix[3]) = get_color(x_coord, y_coord);
+            (pix[0],pix[1],pix[2],pix[3]) = get_color(x_coord, y_coord, surface.depth);
         }
     }
 }
@@ -94,10 +92,10 @@ fn get_pixel<'a>(x: i32, y: i32, img: &'a mut Image) -> &'a mut [u8] {
     return &mut img.data[global_ind as usize..(global_ind+4) as usize]
 }
 
-fn get_color(mut a: f64, mut b: f64) -> (u8, u8, u8, u8) {
+fn get_color(a: f64, b: f64, depth: u32) -> (u8, u8, u8, u8) {
     let x0 = a; let y0 = b;
     let mut x: f64 = 0.; let mut y: f64 = 0.;
-    let mut depth = 300;
+    let mut depth = depth;
     while x*x + y*y <= 4. && depth > 0 {
         let xtmp = x*x - y*y + x0;
         y = 2.*x*y + y0;

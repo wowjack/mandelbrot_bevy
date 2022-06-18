@@ -7,4 +7,3 @@ edition = "2021"
 
 [dependencies]
 bevy = "0.7"
-rug = "1.16"
