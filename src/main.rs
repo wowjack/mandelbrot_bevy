@@ -1,4 +1,4 @@
-use bevy::{prelude::*, render::{texture::BevyDefault}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}, input::{mouse::{MouseWheel, MouseMotion}}};
+use bevy::{prelude::*, render::{texture::BevyDefault}, input::{mouse::{MouseWheel, MouseMotion}}};
 
 fn main() {
     App::new()
