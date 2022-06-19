@@ -60,6 +60,7 @@ fn draw_image(img: &mut Image, surface: &MandelbrotRender) {
 
     let mut threads: Vec<std::thread::JoinHandle<()>> = Vec::new();
     for j in 0..img_size[1] as i32 {
+        //I really didnt want to have to parallelize like this but couldn't figure out a different way
         let d = surface.depth;
         let ptr_usize: usize = img.data.as_mut_ptr() as usize;
         threads.push(std::thread::spawn(move || unsafe {
