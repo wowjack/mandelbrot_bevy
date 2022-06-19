@@ -1,4 +1,4 @@
-use bevy::{prelude::*, render::{texture::BevyDefault}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}, input::mouse::{MouseWheel, MouseMotion}};
+use bevy::{prelude::*, render::{texture::BevyDefault}, diagnostic::{LogDiagnosticsPlugin, FrameTimeDiagnosticsPlugin}, input::{mouse::{MouseWheel, MouseMotion}}};
 
 fn main() {
     App::new()
@@ -6,11 +6,11 @@ fn main() {
         .add_plugin(LogDiagnosticsPlugin::default())
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
         .add_startup_system(init)
-        .add_system(edit_image)
+        .add_system(handle_input)
         .run();
 }
 
-#[derive(Component, Clone)]
+#[derive(Component)]
 struct MandelbrotRender {
     pub image_handle: bevy::asset::HandleId,
     pub depth: u32,
@@ -58,28 +58,53 @@ fn draw_image(img: &mut Image, surface: &MandelbrotRender) {
     let x_step = &surface.width / img_size[0] as f64;
     let y_step = &surface.height / img_size[1] as f64;
 
-    for i in 0..img_size[0] as i32 {
-        for j in 0..img_size[1] as i32 {
-            let x_coord = x_min + i as f64 * x_step;
-            let y_coord = y_min + j as f64 * y_step;
-            let pix = get_pixel(i, j, img);
-            (pix[0],pix[1],pix[2],pix[3]) = get_color(x_coord, y_coord, surface.depth);
-        }
+    let mut threads: Vec<std::thread::JoinHandle<()>> = Vec::new();
+    for j in 0..img_size[1] as i32 {
+        let d = surface.depth;
+        let ptr_usize: usize = img.data.as_mut_ptr() as usize;
+        threads.push(std::thread::spawn(move || unsafe {
+            let mut ptr = ptr_usize as *mut u8;
+            ptr = ptr.offset((j*img_size[0] as i32*4) as isize);
+            for i in 0..img_size[0] as i32{
+                let x_coord = x_min + i as f64 * x_step;
+                let y_coord = y_min + j as f64 * y_step;
+                let bptr = ptr; ptr = ptr.offset(1);
+                let gptr = ptr; ptr = ptr.offset(1);
+                let rptr = ptr; ptr = ptr.offset(1);
+                let aptr = ptr; ptr = ptr.offset(1);
+                (*bptr,*gptr,*rptr,*aptr) = get_color(x_coord, y_coord, d);
+            }
+        }));
+    }
+    for thread in threads {
+        let _ = thread.join();
     }
 }
 
 
-fn edit_image(click: Res<Input<MouseButton>>, motion: EventReader<MouseMotion>, scroll: EventReader<MouseWheel>, mut assets: ResMut<Assets<Image>>, mut query: Query<&mut MandelbrotRender>) {
+fn handle_input(keys: Res<Input<KeyCode>>,click: Res<Input<MouseButton>>, motion: EventReader<MouseMotion>, scroll: EventReader<MouseWheel>, mut assets: ResMut<Assets<Image>>, mut query: Query<&mut MandelbrotRender>) {
     let mut surface: &mut MandelbrotRender = &mut query.get_single_mut().unwrap();
     let img = assets.get_mut(surface.image_handle).unwrap();
 
     let scrolled = handle_scroll(scroll, &mut surface);
     let mut dragged: bool = false;
     if click.pressed(MouseButton::Left) { dragged = handle_drag(motion, &mut surface, img.size()); }
-    if dragged || scrolled {
-        println!("Rerendering");
+    let increased = handle_keys(keys, surface);
+    if dragged || scrolled || increased {
         draw_image(img, surface);
     }
+}
+
+fn handle_keys(keys: Res<Input<KeyCode>>, surface: &mut MandelbrotRender) -> bool {
+    let mut ret = false;
+    if keys.pressed(KeyCode::Up){
+        surface.depth += 1;
+        ret = true;
+    }else if keys.pressed(KeyCode::Down) && surface.depth > 2{
+        surface.depth -= 1;
+        ret = true;
+    }
+    return ret;
 }
 
 //returns true if the surface was changed
@@ -90,8 +115,8 @@ fn handle_scroll(mut er: EventReader<MouseWheel>, mut surface: &mut MandelbrotRe
         match e.unit {
             MouseScrollUnit::Line => {
                 ret = true;
-                surface.height -= e.y as f64 * surface.height * 0.05;
-                surface.width -= e.y as f64 * surface.width * 0.05;
+                surface.height -= e.y as f64 * surface.height * 0.1;
+                surface.width -= e.y as f64 * surface.width * 0.1;
             },
             MouseScrollUnit::Pixel => {
                 panic!("Pixel scrolling not yet implemented");
@@ -111,12 +136,6 @@ fn handle_drag(mut er: EventReader<MouseMotion>, mut surface: &mut MandelbrotRen
     return ret;
 }
 
-fn get_pixel<'a>(x: i32, y: i32, img: &'a mut Image) -> &'a mut [u8] {
-    if x > img.size()[0] as i32 || y > img.size()[1] as i32 { panic!("Referenced pixel outside image.")}
-    let global_ind = (x + y * img.size()[0] as i32) * 4;
-    return &mut img.data[global_ind as usize..(global_ind+4) as usize]
-}
-
 fn get_color(a: f64, b: f64, depth: u32) -> (u8, u8, u8, u8) {
     let x0 = a; let y0 = b;
     let mut x: f64 = 0.; let mut y: f64 = 0.;
@@ -128,7 +147,6 @@ fn get_color(a: f64, b: f64, depth: u32) -> (u8, u8, u8, u8) {
         depth -= 1;
     }
     
-
     match depth {
         0 => (0, 0, 0, 255),
         other => {
