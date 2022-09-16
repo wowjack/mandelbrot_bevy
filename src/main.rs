@@ -81,11 +81,11 @@ fn draw_image(img: &mut Image, surface: &MandelbrotRender) {
 }
 
 
-fn handle_input(keys: Res<Input<KeyCode>>,click: Res<Input<MouseButton>>, motion: EventReader<MouseMotion>, scroll: EventReader<MouseWheel>, mut assets: ResMut<Assets<Image>>, mut query: Query<&mut MandelbrotRender>) {
+fn handle_input(keys: Res<Input<KeyCode>>,click: Res<Input<MouseButton>>, motion: EventReader<MouseMotion>, scroll: EventReader<MouseWheel>, mut assets: ResMut<Assets<Image>>, mut query: Query<&mut MandelbrotRender>, windows: Res<Windows>) {
     let mut surface: &mut MandelbrotRender = &mut query.get_single_mut().unwrap();
     let img = assets.get_mut(surface.image_handle).unwrap();
 
-    let scrolled = handle_scroll(scroll, &mut surface);
+    let scrolled = handle_scroll(scroll, &mut surface, windows);
     let mut dragged: bool = false;
     if click.pressed(MouseButton::Left) { dragged = handle_drag(motion, &mut surface, img.size()); }
     let increased = handle_keys(keys, surface);
@@ -107,15 +107,28 @@ fn handle_keys(keys: Res<Input<KeyCode>>, surface: &mut MandelbrotRender) -> boo
 }
 
 //returns true if the surface was changed
-fn handle_scroll(mut er: EventReader<MouseWheel>, mut surface: &mut MandelbrotRender) -> bool {
+fn handle_scroll(mut er: EventReader<MouseWheel>, mut surface: &mut MandelbrotRender, windows: Res<Windows>) -> bool {
     let mut ret = false;
+    let window = windows.get_primary().expect("No primary window found");
     use bevy::input::mouse::MouseScrollUnit;
     for e in er.iter() {
         match e.unit {
             MouseScrollUnit::Line => {
                 ret = true;
+                let mouse_pos = window.cursor_position().expect("No cursor found");
+                let (cartesian_x, cartesian_y) = (mouse_pos.x-window.width()/2., mouse_pos.y-window.height()/2.);
+                let (prev_render_mouse_x, prev_render_mouse_y) = window_to_surface_coord(cartesian_x, cartesian_y, (window.width(), window.height()), surface);
+
                 surface.height -= e.y as f64 * surface.height * 0.1;
                 surface.width -= e.y as f64 * surface.width * 0.1;
+                
+                let (post_render_mouse_x, post_render_mouse_y) = window_to_surface_coord(cartesian_x, cartesian_y, (window.width(), window.height()), surface);
+                let dx = post_render_mouse_x - prev_render_mouse_x;
+                let dy = post_render_mouse_y - prev_render_mouse_y;
+
+                //FIGURE OUT WHY THE HELL DY MUST BE ADDED AND DX MUST BE SUBTRACTED
+                surface.center.0 -= dx;
+                surface.center.1 += dy;
             },
             MouseScrollUnit::Pixel => {
                 panic!("Pixel scrolling not yet implemented");
@@ -153,4 +166,15 @@ fn get_color(a: f64, b: f64, depth: u32) -> (u8, u8, u8, u8) {
             ((num/(256*256)) as u8, ((num/256)%256) as u8, (num%256) as u8, 255)
         }
     }
+}
+
+fn window_to_surface_coord(x: f32, y: f32, window_size: (f32, f32), surface: &MandelbrotRender) -> (f64, f64) {
+    let xstep = surface.width / window_size.0 as f64;
+    let ystep = surface.height / window_size.1 as f64;
+
+    let xpos = surface.center.0 + (xstep * x as f64);
+    let ypos = surface.center.1 + (ystep * y as f64);
+
+
+    return (xpos, ypos);
 }
