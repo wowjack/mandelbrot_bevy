@@ -1,7 +1,7 @@
 # Interative Mandelbrot Render
 
-Scroll to zoom. Up arrow to increase maximum iterations (increase detail), down arrow to decrease. \
-Execure `$ cargo run --release` 
+Scroll to zoom. Up arrow key to increase maximum iterations (increase detail), down arrow key to decrease. \
+Execute `$ cargo run --release` 
 
 ![image](./images/img.png)
 
