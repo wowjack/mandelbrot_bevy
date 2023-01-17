@@ -10,7 +10,7 @@ fn main() {
 
 #[derive(Component)]
 struct MandelbrotRender {
-    pub image_handle: bevy::asset::HandleId,
+    pub image_handle: Handle<Image>,
     pub depth: u32,
     pub width: f64,
     pub height: f64,
@@ -19,11 +19,11 @@ struct MandelbrotRender {
 
 fn init(mut assets: ResMut<Assets<Image>>, mut commands: Commands, windows: Res<Windows>) {
     let window = windows.get_primary().unwrap();
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+    commands.spawn(Camera2dBundle::default());
 
     let mut image = create_blank_image(window.width() as u32, window.height() as u32);
     let mut surface = MandelbrotRender {
-        image_handle: bevy::asset::HandleId::default::<Image>(),
+        image_handle: Handle::<Image>::default(),
         depth: 50,
         width: 2. * (window.width()/window.height()) as f64,
         height: 2.,
@@ -32,9 +32,8 @@ fn init(mut assets: ResMut<Assets<Image>>, mut commands: Commands, windows: Res<
     draw_image(&mut image, &surface);
 
     let handle = assets.add(image);
-    let id = handle.id;
-    surface.image_handle = id;
-    commands.spawn_bundle(SpriteBundle {
+    surface.image_handle = handle.clone();
+    commands.spawn(SpriteBundle {
         texture: handle,
         ..default()
     }).insert(surface);
@@ -83,7 +82,7 @@ fn draw_image(img: &mut Image, surface: &MandelbrotRender) {
 
 fn handle_input(keys: Res<Input<KeyCode>>,click: Res<Input<MouseButton>>, motion: EventReader<MouseMotion>, scroll: EventReader<MouseWheel>, mut assets: ResMut<Assets<Image>>, mut query: Query<&mut MandelbrotRender>, windows: Res<Windows>) {
     let mut surface: &mut MandelbrotRender = &mut query.get_single_mut().unwrap();
-    let img = assets.get_mut(surface.image_handle).unwrap();
+    let img = assets.get_mut(&surface.image_handle).unwrap();
 
     let scrolled = handle_scroll(scroll, &mut surface, windows);
     let mut dragged: bool = false;
@@ -126,12 +125,11 @@ fn handle_scroll(mut er: EventReader<MouseWheel>, mut surface: &mut MandelbrotRe
                 let dx = post_render_mouse_x - prev_render_mouse_x;
                 let dy = post_render_mouse_y - prev_render_mouse_y;
 
-                //FIGURE OUT WHY THE HELL DY MUST BE ADDED AND DX MUST BE SUBTRACTED
                 surface.center.0 -= dx;
                 surface.center.1 += dy;
             },
             MouseScrollUnit::Pixel => {
-                panic!("Pixel scrolling not yet implemented");
+                unimplemented!("Pixel scrolling not yet implemented");
             }
         }
     }
