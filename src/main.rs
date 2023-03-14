@@ -55,27 +55,35 @@ fn draw_image(img: &mut Image, surface: &MandelbrotRender) {
     let x_step = &surface.width / img_size[0] as f64;
     let y_step = &surface.height / img_size[1] as f64;
 
-    let mut threads: Vec<std::thread::JoinHandle<()>> = Vec::new();
-    for j in 0..img_size[1] as i32 {
-        //I really didnt want to have to parallelize like this but couldn't figure out a different way
-        let d = surface.depth;
-        let ptr_usize: usize = img.data.as_mut_ptr() as usize;
-        threads.push(std::thread::spawn(move || unsafe {
-            let mut ptr = ptr_usize as *mut u8;
-            ptr = ptr.offset((j*img_size[0] as i32*4) as isize);
-            for i in 0..img_size[0] as i32{
-                let x_coord = x_min + i as f64 * x_step;
-                let y_coord = y_min + j as f64 * y_step;
-                let bptr = ptr; ptr = ptr.offset(1);
-                let gptr = ptr; ptr = ptr.offset(1);
-                let rptr = ptr; ptr = ptr.offset(1);
-                let aptr = ptr; ptr = ptr.offset(1);
-                (*bptr,*gptr,*rptr,*aptr) = get_color(x_coord, y_coord, d);
-            }
-        }));
-    }
-    for thread in threads {
-        let _ = thread.join();
+    let depth = surface.depth;
+    let image_data = img.data.as_mut_slice();
+    for j in 0..img_size[1] as usize {
+        for i in 0..img_size[0] as usize {
+            let x_coord = x_min + i as f64 * x_step;
+            let y_coord = y_min + j as f64 * y_step;
+            
+            let index = j*img_size[0] as usize*4;
+            let color = get_color(x_coord, y_coord, depth);
+            image_data[index] = color.0;
+            image_data[index+1] = color.1;
+            image_data[index+2] = color.2;
+            image_data[index+3] = color.3;
+            
+        }
+        //let ptr_usize: usize = img.data.as_mut_ptr() as usize;
+        //threads.push(std::thread::spawn(move || unsafe {
+        //    let mut ptr = ptr_usize as *mut u8;
+        //    ptr = ptr.offset((j*img_size[0] as i32*4) as isize);
+        //    for i in 0..img_size[0] as i32{
+        //        let x_coord = x_min + i as f64 * x_step;
+        //        let y_coord = y_min + j as f64 * y_step;
+        //        let bptr = ptr; ptr = ptr.offset(1);
+        //        let gptr = ptr; ptr = ptr.offset(1);
+        //        let rptr = ptr; ptr = ptr.offset(1);
+        //        let aptr = ptr; ptr = ptr.offset(1);
+        //        (*bptr,*gptr,*rptr,*aptr) = get_color(x_coord, y_coord, d);
+        //    }
+        //}));
     }
 }
 
