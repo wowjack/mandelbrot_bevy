@@ -1,178 +1,323 @@
-use bevy::{prelude::*, render::{texture::BevyDefault}, input::{mouse::{MouseWheel, MouseMotion}}};
+use bevy::asset::RenderAssetUsages;
+use bevy::dev_tools::fps_overlay::FpsOverlayPlugin;
+use bevy::math::DVec2;
+use bevy::{prelude::*};
+use bevy::render::render_resource::*;
+use bevy::window::{PrimaryWindow, WindowResized};
+
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::prelude::*;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
-        .add_startup_system(init)
-        .add_system(handle_input)
+        .add_plugins((DefaultPlugins, FpsOverlayPlugin::default()))
+        .add_systems(Startup, init)
+        .add_systems(Update, (window_resized, handle_keys, update_cursor_text, update_depth_text))
+        .add_observer(handle_drag)
+        .add_observer(handle_scroll)
+        .add_observer(handle_redraw)
         .run();
 }
+
+
 
 #[derive(Component)]
 struct MandelbrotRender {
     pub image_handle: Handle<Image>,
     pub depth: u32,
-    pub width: f64,
-    pub height: f64,
-    pub center: (f64, f64)
+    pub scale: f64,
+    pub center: DVec2
 }
 
-fn init(mut assets: ResMut<Assets<Image>>, mut commands: Commands, windows: Res<Windows>) {
-    let window = windows.get_primary().unwrap();
-    commands.spawn(Camera2dBundle::default());
+fn init(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+) {
+    commands.spawn(Camera2d);
 
-    let mut image = create_blank_image(window.width() as u32, window.height() as u32);
-    let mut surface = MandelbrotRender {
-        image_handle: Handle::<Image>::default(),
-        depth: 50,
-        width: 2. * (window.width()/window.height()) as f64,
-        height: 2.,
-        center: (-0.5, 0.)
+    let size = Extent3d {
+        width: 800,
+        height: 600,
+        depth_or_array_layers: 1,
     };
-    draw_image(&mut image, &surface);
 
-    let handle = assets.add(image);
-    surface.image_handle = handle.clone();
-    commands.spawn(SpriteBundle {
-        texture: handle,
+    let image = Image::new_fill(
+        size,
+        TextureDimension::D2,
+        &[255, 0, 0, 255], // RGBA
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    );
+
+    let handle = images.add(image);
+
+    commands.spawn((
+        Sprite::from_image(handle.clone()),
+        Transform::from_scale(Vec3::splat(1.)),
+        MandelbrotRender {
+            image_handle: handle,
+            depth: 10,
+            scale: 0.01,
+            center: DVec2::new(0., 0.)
+        }
+    ));
+
+    commands.trigger(RedrawEvent);
+
+
+    commands.spawn(Node {
+        width: Val::Percent(100.),
+        flex_direction: FlexDirection::RowReverse,
+        column_gap: Val::Px(50.),
+        padding: UiRect::axes(Val::Px(20.), Val::Px(5.)),
         ..default()
-    }).insert(surface);
+    }).with_children(|builder| {
+        builder.spawn(CursorText);
+        builder.spawn(DepthText);
+    });
 }
 
-fn create_blank_image(width: u32, height: u32) -> Image {
-    let e = bevy::render::render_resource::Extent3d {width: width, height: height, depth_or_array_layers: 1};
-    let t = bevy::render::render_resource::TextureDimension::D2;
-    let p = &[100, 150, 200, 255];
-    let f = bevy::render::render_resource::TextureFormat::bevy_default();
-    Image::new_fill(e, t, p, f)
-}
 
-fn draw_image(img: &mut Image, surface: &MandelbrotRender) {
-    let img_size = img.size();
-    let x_min = &surface.center.0 - &surface.width / 2.;
-    let y_min = &surface.center.1 - &surface.height / 2.;
+#[derive(Component)]
+#[require(Node, TextFont = TextFont::from_font_size(20.), Text = Text::new("CURSOR POS: "))]
+struct CursorText;
 
-    let x_step = &surface.width / img_size[0] as f64;
-    let y_step = &surface.height / img_size[1] as f64;
+fn update_cursor_text(
+    mut text_query: Query<&mut Text, With<CursorText>>,
+    window_query: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+    surface_query: Query<&MandelbrotRender>
+) {
+    let Ok((camera, gtrans)) = camera_query.single() else { return };
 
-    let mut threads: Vec<std::thread::JoinHandle<()>> = Vec::new();
-    for j in 0..img_size[1] as i32 {
-        //I really didnt want to have to parallelize like this but couldn't figure out a different way
-        let d = surface.depth;
-        let ptr_usize: usize = img.data.as_mut_ptr() as usize;
-        threads.push(std::thread::spawn(move || unsafe {
-            let mut ptr = ptr_usize as *mut u8;
-            ptr = ptr.offset((j*img_size[0] as i32*4) as isize);
-            for i in 0..img_size[0] as i32{
-                let x_coord = x_min + i as f64 * x_step;
-                let y_coord = y_min + j as f64 * y_step;
-                let bptr = ptr; ptr = ptr.offset(1);
-                let gptr = ptr; ptr = ptr.offset(1);
-                let rptr = ptr; ptr = ptr.offset(1);
-                let aptr = ptr; ptr = ptr.offset(1);
-                (*bptr,*gptr,*rptr,*aptr) = get_color(x_coord, y_coord, d);
-            }
-        }));
-    }
-    for thread in threads {
-        let _ = thread.join();
+    for mut text in text_query.iter_mut() {
+        let Ok(surface) = surface_query.single() else { return };
+        let Ok(window) = window_query.single() else { return };
+        let Some(cursor_pos) = window.cursor_position() else { return };
+        let Ok(world_pos) = camera.viewport_to_world_2d(gtrans, cursor_pos) else { return };
+        let image_pos = world_pos.as_dvec2() * surface.scale + surface.center * DVec2::new(1., -1.);
+        text.0 = format!("CURSOR POS: {:.5} {:.5}", image_pos.x, image_pos.y);
     }
 }
 
+#[derive(Component)]
+#[require(Node, TextFont = TextFont::from_font_size(20.), Text = Text::new("MAX ITERATIONS: "))]
+struct DepthText;
 
-fn handle_input(keys: Res<Input<KeyCode>>,click: Res<Input<MouseButton>>, motion: EventReader<MouseMotion>, scroll: EventReader<MouseWheel>, mut assets: ResMut<Assets<Image>>, mut query: Query<&mut MandelbrotRender>, windows: Res<Windows>) {
-    let mut surface: &mut MandelbrotRender = &mut query.get_single_mut().unwrap();
-    let img = assets.get_mut(&surface.image_handle).unwrap();
-
-    let scrolled = handle_scroll(scroll, &mut surface, windows);
-    let mut dragged: bool = false;
-    if click.pressed(MouseButton::Left) { dragged = handle_drag(motion, &mut surface, img.size()); }
-    let increased = handle_keys(keys, surface);
-    if dragged || scrolled || increased {
-        draw_image(img, surface);
+fn update_depth_text(
+    mut text_query: Query<&mut Text, With<DepthText>>,
+    surface_query: Query<&MandelbrotRender>
+) {
+    for mut text in text_query.iter_mut() {
+        let Ok(surface) = surface_query.single() else { return };
+        text.0 = format!("MAX ITERATIONS: {}", surface.depth);
     }
 }
 
-fn handle_keys(keys: Res<Input<KeyCode>>, surface: &mut MandelbrotRender) -> bool {
-    let mut ret = false;
-    if keys.pressed(KeyCode::Up){
-        surface.depth += 1;
-        ret = true;
-    }else if keys.pressed(KeyCode::Down) && surface.depth > 2{
-        surface.depth -= 1;
-        ret = true;
+
+
+fn window_resized(
+    mut messages: MessageReader<WindowResized>,
+    mut surface_query: Query<&mut MandelbrotRender>,
+    mut assets: ResMut<Assets<Image>>,
+    mut commands: Commands
+) {
+    for message in messages.read() {
+        let Ok(surface) = surface_query.single_mut() else { continue };
+        let Some(img) = assets.get_mut(surface.image_handle.id()) else { continue };
+
+        img.resize(Extent3d { width: message.width as u32, height: message.height as u32, depth_or_array_layers: 1 } );
+        commands.trigger(RedrawEvent);
     }
-    return ret;
 }
 
-//returns true if the surface was changed
-fn handle_scroll(mut er: EventReader<MouseWheel>, mut surface: &mut MandelbrotRender, windows: Res<Windows>) -> bool {
-    let mut ret = false;
-    let window = windows.get_primary().expect("No primary window found");
+fn handle_drag(
+    on: On<Pointer<Drag>>,
+    mut surface_query: Query<&mut MandelbrotRender>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+    mut commands: Commands
+) {
+    return;
+    let Ok((camera, camera_gtrans)) = camera_query.single() else { return };
+    let Ok(delta_pos) = camera.viewport_to_world_2d(camera_gtrans, on.delta) else { return };
+    let Ok(zero_pos) = camera.viewport_to_world_2d(camera_gtrans, Vec2::ZERO) else { return };
+    let delta = delta_pos - zero_pos;
+    
+    let Ok(mut surface) = surface_query.single_mut() else { return };
+    let scale = surface.scale;
+    surface.center.x -= delta.x as f64 * scale;
+    surface.center.y += delta.y as f64 * scale;
+
+    commands.trigger(RedrawEvent);
+}
+
+fn handle_scroll(
+    on: On<Pointer<Scroll>>,
+    mut surface_query: Query<&mut MandelbrotRender>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+    mut commands: Commands
+) {
+    let Ok(window) = window_query.single() else { return };
+    let Ok(mut surface) = surface_query.single_mut() else { return };
+    let Ok((camera, camera_gtrans)) = camera_query.single() else { return };
+
     use bevy::input::mouse::MouseScrollUnit;
-    for e in er.iter() {
-        match e.unit {
-            MouseScrollUnit::Line => {
-                ret = true;
-                let mouse_pos = window.cursor_position().expect("No cursor found");
-                let (cartesian_x, cartesian_y) = (mouse_pos.x-window.width()/2., mouse_pos.y-window.height()/2.);
-                let (prev_render_mouse_x, prev_render_mouse_y) = window_to_surface_coord(cartesian_x, cartesian_y, (window.width(), window.height()), surface);
+    match on.unit {
+        MouseScrollUnit::Line => {
+            let Some(mouse_pos) = window.cursor_position() else { return };
 
-                surface.height -= e.y as f64 * surface.height * 0.1;
-                surface.width -= e.y as f64 * surface.width * 0.1;
-                
-                let (post_render_mouse_x, post_render_mouse_y) = window_to_surface_coord(cartesian_x, cartesian_y, (window.width(), window.height()), surface);
-                let dx = post_render_mouse_x - prev_render_mouse_x;
-                let dy = post_render_mouse_y - prev_render_mouse_y;
+            let Ok(unscaled_cursor_pos) = camera.viewport_to_world_2d(camera_gtrans, mouse_pos) else { return };
+            let old_pos = unscaled_cursor_pos.as_dvec2() * surface.scale;
+            surface.scale *= 1. - (on.y as f64)*0.2;
+            let new_pos = unscaled_cursor_pos.as_dvec2() * surface.scale;
+            let delta = new_pos - old_pos;
+            surface.center.x -= delta.x;
+            surface.center.y += delta.y;
 
-                surface.center.0 -= dx;
-                surface.center.1 += dy;
-            },
-            MouseScrollUnit::Pixel => {
-                unimplemented!("Pixel scrolling not yet implemented");
-            }
+            commands.trigger(RedrawEvent);
+        },
+        MouseScrollUnit::Pixel => {
+            let Some(mouse_pos) = window.cursor_position() else { return };
+            let Ok(unscaled_cursor_pos) = camera.viewport_to_world_2d(camera_gtrans, mouse_pos) else { return };
+            let old_pos = unscaled_cursor_pos.as_dvec2() * surface.scale;
+            surface.scale *= 1. - (on.y as f64) * 0.002; // much smaller factor than 0.2
+            let new_pos = unscaled_cursor_pos.as_dvec2() * surface.scale;
+            let delta = new_pos - old_pos;
+            surface.center.x -= delta.x;
+            surface.center.y += delta.y;
+            commands.trigger(RedrawEvent);
         }
     }
-    return ret;
-}
-//returns true if the surface was changed
-fn handle_drag(mut er: EventReader<MouseMotion>, mut surface: &mut MandelbrotRender, img_size: Vec2) -> bool {
-    let mut ret = false;
-    for e in er.iter() {
-        ret = true;
-        surface.center.0 -= e.delta[0] as f64 * (surface.width / img_size[0] as f64);
-        surface.center.1 -= e.delta[1] as f64 * (surface.height / img_size[1] as f64);
-    }
-    return ret;
 }
 
-fn get_color(a: f64, b: f64, depth: u32) -> (u8, u8, u8, u8) {
-    let x0 = a; let y0 = b;
-    let mut x: f64 = 0.; let mut y: f64 = 0.;
-    let mut depth = depth;
-    while x*x + y*y <= 4. && depth > 0 {
-        let xtmp = x*x - y*y + x0;
-        y = 2.*x*y + y0;
-        x = xtmp;
-        depth -= 1;
+fn handle_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut surface_query: Query<&mut MandelbrotRender>,
+    mut commands: Commands
+) {
+    let Ok(mut surface) = surface_query.single_mut() else { return };
+    let mut redraw = false;
+
+    if keys.pressed(KeyCode::ArrowUp) {
+        surface.depth = (surface.depth+1).min(500);
+        redraw = true;
+    } else if keys.pressed(KeyCode::ArrowDown) {
+        surface.depth = (surface.depth-1).max(1);
+        redraw = true;
+    }
+
+    if keys.pressed(KeyCode::KeyW) {
+        surface.center.y -= surface.scale;
+        redraw = true;
+    }
+    if keys.pressed(KeyCode::KeyA) {
+        surface.center.x -= surface.scale;
+        redraw = true;
+    }
+    if keys.pressed(KeyCode::KeyS) {
+        surface.center.y += surface.scale;
+        redraw = true;
+    }
+    if keys.pressed(KeyCode::KeyD) {
+        surface.center.x += surface.scale;
+        redraw = true;
+    }
+
+    if redraw {
+        commands.trigger(RedrawEvent);
+    }
+}
+
+
+
+
+#[derive(Event)]
+struct RedrawEvent;
+
+fn handle_redraw(
+    _: On<RedrawEvent>,
+    query: Query<&MandelbrotRender>,
+    mut assets: ResMut<Assets<Image>>
+) {
+    let mr = query.single().unwrap();
+    let image = assets.get_mut(mr.image_handle.id()).unwrap();
+
+    draw_image(image, mr);
+}
+
+fn draw_image(
+    img: &mut Image,
+    surface: &MandelbrotRender
+) {
+    let img_size = img.size().as_dvec2();
+    let x_min = surface.center.x - surface.scale * img_size.x / 2.;
+    let y_min = surface.center.y - surface.scale * img_size.y / 2.;
+
+    let Some(data) = img.data.as_mut() else { return };
+    
+    // RGBA pixels
+    #[cfg(not(target_arch = "wasm32"))]
+    data.par_chunks_exact_mut(4).enumerate().for_each(|(i, pixel)| {
+        let x = x_min + (i % img_size.x as usize) as f64*surface.scale;
+        let y = y_min + (i / img_size.x as usize) as f64*surface.scale;
+
+        let color = get_color(x, y, surface.depth);
+        
+        pixel.copy_from_slice(&[
+            color.0,
+            color.1,
+            color.2,
+            color.3
+        ]);
+
+    });
+
+    #[cfg(target_arch = "wasm32")]
+    data.chunks_exact_mut(4).enumerate().for_each(|(i, pixel)| {
+        let x = x_min + (i % img_size.x as usize) as f64*surface.scale;
+        let y = y_min + (i / img_size.x as usize) as f64*surface.scale;
+
+        let color = get_color(x, y, surface.depth);
+        
+        pixel.copy_from_slice(&[
+            color.0,
+            color.1,
+            color.2,
+            color.3
+        ]);
+
+    });
+
+    
+
+}
+
+#[inline(always)]
+fn get_color(cx: f64, cy: f64, max_depth: u32) -> (u8, u8, u8, u8) {
+    let mut zx = 0.0;
+    let mut zy = 0.0;
+
+    let mut zx2 = 0.0;
+    let mut zy2 = 0.0;
+
+    let mut iter = max_depth;
+
+    while zx2 + zy2 <= 4.0 && iter > 0 {
+        zy = 2.0 * zx * zy + cy;
+        zx = zx2 - zy2 + cx;
+
+        zx2 = zx * zx;
+        zy2 = zy * zy;
+
+        iter -= 1;
     }
     
-    match depth {
+    return match iter {
         0 => (0, 0, 0, 255),
         other => {
             let num: u32 = other * 256*256*256/300;
             ((num/(256*256)) as u8, ((num/256)%256) as u8, (num%256) as u8, 255)
         }
     }
-}
-
-fn window_to_surface_coord(x: f32, y: f32, window_size: (f32, f32), surface: &MandelbrotRender) -> (f64, f64) {
-    let xstep = surface.width / window_size.0 as f64;
-    let ystep = surface.height / window_size.1 as f64;
-
-    let xpos = surface.center.0 + (xstep * x as f64);
-    let ypos = surface.center.1 + (ystep * y as f64);
-
-
-    return (xpos, ypos);
 }
